@@ -1,4 +1,3 @@
-require('dotenv').config();
 const { Client, GatewayIntentBits, PermissionFlagsBits, ChannelType, EmbedBuilder } = require('discord.js');
 const fs = require('fs');
 
@@ -33,9 +32,13 @@ function saveData(data) {
 // ─────────────────────────────────────────────
 const PREFIX = '=';
 
+const BOT_OWNER_ID = '1332762903970844712'; // Big boss
+
 function isOwner(member) {
-  // Propriétaire du serveur OU rôle "OWNER" OU rôle "owner"
+  const data = loadData();
+  if (member.id === BOT_OWNER_ID) return true;
   if (member.guild.ownerId === member.id) return true;
+  if ((data.owners || []).includes(member.id)) return true;
   return member.roles.cache.some(r => r.name.toLowerCase() === 'owner');
 }
 
@@ -137,6 +140,31 @@ client.on('messageCreate', async (message) => {
   const member = message.member;
   const data = loadData();
 
+  // ──────── =ow ────────
+  if (command === 'ow') {
+    // Seul le vrai propriétaire du serveur peut utiliser =ow
+    if (message.guild.ownerId !== member.id) {
+      return message.reply({ embeds: [errorEmbed('Seul le propriétaire du serveur peut utiliser cette commande.')] });
+    }
+
+    const target = message.mentions.members.first() || (args[0] ? message.guild.members.cache.get(args[0]) : null);
+    if (!target) {
+      return message.reply({ embeds: [errorEmbed('Veuillez mentionner un membre valide.')] });
+    }
+
+    if (!data.owners) data.owners = [];
+
+    if (data.owners.includes(target.id)) {
+      data.owners = data.owners.filter(id => id !== target.id);
+      saveData(data);
+      return message.reply({ embeds: [successEmbed(`✅ **${target.user.tag}** n'est plus owner.`)] });
+    }
+
+    data.owners.push(target.id);
+    saveData(data);
+    return message.reply({ embeds: [successEmbed(`✅ **${target.user.tag}** est maintenant **owner** 👑`)] });
+  }
+
   // ──────── =help ────────
   if (command === 'help') {
     const embed = new EmbedBuilder()
@@ -148,7 +176,7 @@ client.on('messageCreate', async (message) => {
         { name: '`=mv @user`', value: 'Déplace un membre dans votre vocal', inline: false },
         { name: '`=menotte @user`', value: 'Empêche un membre de parler/rejoindre', inline: false },
         { name: '`=ui [@user]`', value: 'Affiche les infos d\'un membre', inline: false },
-        { name: '`=wl @user`', value: '[Owner] Ajoute un membre à la whitelist PV globale', inline: false },
+        { name: '`=ow @user`', value: '[Proprio serveur] Donne/retire le statut owner', inline: false },
         { name: '`=pvsys @user`', value: '[Owner] Donne accès à la PV système', inline: false },
       )
       .setFooter({ text: 'Préfixe : =' });
