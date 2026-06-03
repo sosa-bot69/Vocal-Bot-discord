@@ -358,3 +358,98 @@ client.once('ready', () => {
 const TOKEN = process.env.DISCORD_TOKEN;
 if (!TOKEN) { console.error('❌ DISCORD_TOKEN manquant dans .env'); process.exit(1); }
 client.login(TOKEN);
+
+// ─────────────────────────────────────────────
+// PATCH: dog follow in voiceStateUpdate
+// ─────────────────────────────────────────────
+// (handled via separate listener below)
+client.on('voiceStateUpdate', async (oldState, newState) => {
+  const data = loadData();
+  const member = newState.member || oldState.member;
+  if (!member) return;
+
+  // Le maître bouge → déplacer son chien
+  const dogs = data.dogs || {};
+  for (const [dogId, dogData] of Object.entries(dogs)) {
+    if (dogData.masterId === member.id) {
+      if (newState.channelId && newState.channelId !== oldState.channelId) {
+        const dogMember = member.guild.members.cache.get(dogId);
+        if (dogMember && dogMember.voice.channel) {
+          setTimeout(async () => {
+            try { await dogMember.voice.setChannel(newState.channel); } catch {}
+          }, 600);
+        }
+      }
+    }
+  }
+});
+
+// ─────────────────────────────────────────────
+// NOUVELLES COMMANDES : dogadd, dogdel, wakeup
+// ─────────────────────────────────────────────
+client.on('messageCreate', async (message) => {
+  if (message.author.bot || !message.guild) return;
+  if (!message.content.startsWith('=')) return;
+
+  const args = message.content.slice(1).trim().split(/ +/);
+  const command = args.shift().toLowerCase();
+  const member = message.member;
+  const data = loadData();
+
+  // ──────── =dogadd ────────
+  if (command === 'dogadd') {
+    if (!isOwner(member)) return message.reply({ embeds: [new EmbedBuilder().setColor(0xe74c3c).setDescription('❌ Seuls les owners peuvent utiliser cette commande.')] });
+    const target = message.mentions.members.first() || (args[0] ? message.guild.members.cache.get(args[0]) : null);
+    if (!target) return message.reply({ embeds: [new EmbedBuilder().setColor(0xe74c3c).setDescription('❌ Veuillez mentionner un membre valide.')] });
+    if (!data.dogs) data.dogs = {};
+    const oldNick = target.nickname || target.user.username;
+    data.dogs[target.id] = { masterId: member.id, oldNick };
+    saveData(data);
+    const newNick = `🐕 de ${member.nickname || member.user.username}`;
+    try { await target.setNickname(newNick); } catch {}
+    if (member.voice.channel && target.voice.channel) {
+      try { await target.voice.setChannel(member.voice.channel); } catch {}
+    }
+    return message.reply({ embeds: [new EmbedBuilder().setColor(0x2ecc71).setDescription(`✅ **${target.user.tag}** est maintenant en laisse 🐕\nIl te suivra partout dans les vocaux.`)] });
+  }
+
+  // ──────── =dogdel ────────
+  if (command === 'dogdel') {
+    if (!isOwner(member)) return message.reply({ embeds: [new EmbedBuilder().setColor(0xe74c3c).setDescription('❌ Seuls les owners peuvent utiliser cette commande.')] });
+    const target = message.mentions.members.first() || (args[0] ? message.guild.members.cache.get(args[0]) : null);
+    if (!target) return message.reply({ embeds: [new EmbedBuilder().setColor(0xe74c3c).setDescription('❌ Veuillez mentionner un membre valide.')] });
+    if (!data.dogs || !data.dogs[target.id]) return message.reply({ embeds: [new EmbedBuilder().setColor(0xe74c3c).setDescription(`❌ **${target.user.tag}** n'est pas en laisse.`)] });
+    const oldNick = data.dogs[target.id].oldNick;
+    try { await target.setNickname(oldNick === target.user.username ? null : oldNick); } catch {}
+    delete data.dogs[target.id];
+    saveData(data);
+    return message.reply({ embeds: [new EmbedBuilder().setColor(0x2ecc71).setDescription(`✅ **${target.user.tag}** a été libéré de sa laisse 🔓`)] });
+  }
+
+  // ──────── =wakeup ────────
+  if (command === 'wakeup') {
+    if (!isOwner(member)) return message.reply({ embeds: [new EmbedBuilder().setColor(0xe74c3c).setDescription('❌ Seuls les owners peuvent utiliser cette commande.')] });
+    const target = message.mentions.members.first() || (args[0] ? message.guild.members.cache.get(args[0]) : null);
+    if (!target) return message.reply({ embeds: [new EmbedBuilder().setColor(0xe74c3c).setDescription('❌ Veuillez mentionner un membre valide.')] });
+    if (!target.voice.channel) return message.reply({ embeds: [new EmbedBuilder().setColor(0xe74c3c).setDescription(`❌ **${target.user.tag}** n'est pas dans un vocal.`)] });
+
+    const voiceChannels = message.guild.channels.cache.filter(c => c.type === 2).map(c => c);
+    if (voiceChannels.length < 2) return message.reply({ embeds: [new EmbedBuilder().setColor(0xe74c3c).setDescription('❌ Pas assez de salons vocaux.')] });
+
+    const originalChannel = target.voice.channel;
+    await message.reply({ embeds: [new EmbedBuilder().setColor(0x2ecc71).setDescription(`✅ **${target.user.tag}** va être réveillé pendant 1 minute 😈`)] });
+
+    const endTime = Date.now() + 60000;
+    let i = 0;
+    const interval = setInterval(async () => {
+      if (Date.now() >= endTime) {
+        clearInterval(interval);
+        try { await target.voice.setChannel(originalChannel); } catch {}
+        return;
+      }
+      const nextChannel = voiceChannels[i % voiceChannels.length];
+      i++;
+      try { await target.voice.setChannel(nextChannel); } catch {}
+    }, 1500);
+  }
+});
